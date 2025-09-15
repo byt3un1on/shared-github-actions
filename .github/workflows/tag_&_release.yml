@@ -18,6 +18,10 @@ jobs:
           app_id: ${{ secrets.APP_ID }}
           private_key: ${{ secrets.APP_PRIVATE_KEY }}
 
+      # Export GH Token
+      - name: Export GH Token
+        run: echo "GH_TOKEN=${{ steps.app-token.outputs.token }}" >> $GITHUB_ENV
+
       # Checkout the repository
       - name: Checkout repository
         uses: actions/checkout@v3
