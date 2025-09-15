@@ -1,0 +1,78 @@
+name: 4 - Tag & Release
+
+on:
+  workflow_call:
+
+env:
+  GH_TOKEN: ${{ secrets.PATHSHARDS_GITHUB_PIPELINE_TOKEN }}
+
+jobs:
+  tag_and_release:
+    name: and Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Checkout the repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Calculate Next Version
+      - name: Calculate Next Version
+        run: |
+          git fetch --tags
+          latest_tag=$(git tag --list "v*" --sort=-v:refname | head -n 1)
+          if [ -z "$latest_tag" ]; then
+            echo "Latest tag not found. Setting next version to 1.0.0."
+            next_version="1.0.0"
+          else
+            version=${latest_tag#v}
+            IFS='.' read -r major minor patch <<< "$version"
+            echo "major: $major"
+            echo "minor: $minor"
+            echo "patch: $patch"
+            if [ "$patch" -lt 99 ]; then
+              next_version="$major.$minor.$((patch + 1))"
+            else
+              if [ "$minor" -lt 99 ]; then
+                next_version="$major.$((minor + 1)).0"
+              else
+                next_version="$((major + 1)).0.0"
+              fi
+            fi
+          fi
+          echo "Next version: $next_version"
+          echo "next_version=$next_version" >> $GITHUB_ENV
+
+      # Check if Tag Already Exists
+      - name: Check if Tag Already Exists
+        run: |
+          git fetch --tags
+          qtd=$(git ls-remote --tags origin "v${{ env.next_version }}" | grep -c "refs/tags/v${{ env.next_version }}$" || true)
+          echo "Found $qtd tags with name v${{ env.next_version }} in remote."
+          if [ "$qtd" -gt 0 ]; then
+            echo "Tag v${{ env.next_version }} already exists in remote. Deleting it."
+            git push --delete origin "v${{ env.next_version }}"
+          else
+            echo "Tag v${{ env.next_version }} does not exist in remote. Proceeding."
+          fi
+
+      # Create and Push Tag
+      - name: Create and Push Tag
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a "v${{ env.next_version }}" -m "Release version v${{ env.next_version }}"
+          git push origin "v${{ env.next_version }}"
+
+      # Create GitHub Release
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        with:
+          tag_name: "v${{ env.next_version }}"
+          release_name: "Release v${{ env.next_version }}"
+          body: "Release notes for version v${{ env.next_version }}"
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ env.GH_TOKEN }}

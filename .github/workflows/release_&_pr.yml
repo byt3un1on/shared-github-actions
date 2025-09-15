@@ -1,0 +1,153 @@
+name: Release & PR
+
+on:
+  workflow_call:
+    inputs:
+      env:
+        required: true
+        type: string
+
+env:
+  GH_TOKEN: ${{ secrets.PATHSHARDS_GITHUB_PIPELINE_TOKEN }}
+
+jobs:
+  release_and_pr:
+    name: to ${{ inputs.env }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Validate Env
+        run: |
+          if [[ "${{ inputs.env }}" != "dev" && "${{ inputs.env }}" != "hom" && "${{ inputs.env }}" != "prd" ]]; then
+            echo "Error: Invalid value for 'env': ${{ inputs.env }}" >&2
+            exit 1
+          else
+            echo "Valid value for 'env': ${{ inputs.env }}"
+          fi
+
+      - name: Check if Release Branch is Needed
+        run: |
+          if [[ "${{ inputs.env }}" == "hom" ]]; then
+            echo "generate_release_branch=true" >> $GITHUB_ENV
+          else
+            echo "generate_release_branch=false" >> $GITHUB_ENV
+          fi
+
+      - name: Calculate Next Version
+        if: env.generate_release_branch == 'true'
+        run: |
+          git fetch --tags
+          latest_tag=$(git tag --list "v*" --sort=-v:refname | head -n 1)
+          if [ -z "$latest_tag" ]; then
+            echo "Latest tag not found. Setting next version to 1.0.0."
+            next_version="1.0.0"
+          else
+            version=${latest_tag#v}
+            IFS='.' read -r major minor patch <<< "$version"
+            echo "major: $major"
+            echo "minor: $minor"
+            echo "patch: $patch"
+            if [ "$patch" -lt 99 ]; then
+              next_version="$major.$minor.$((patch + 1))"
+            else
+              if [ "$minor" -lt 99 ]; then
+                next_version="$major.$((minor + 1)).0"
+              else
+                next_version="$((major + 1)).0.0"
+              fi
+            fi
+          fi
+          echo "Next version: $next_version"
+          echo "next_version=$next_version" >> $GITHUB_ENV
+
+      - name: Setup Git
+        if: env.generate_release_branch == 'true'
+        run: |
+          git config user.name "sh4dowmyst1c"
+          git config user.email "sh4dowmyst1c@users.noreply.github.com"
+
+      - name: Check if Release Branch Exists
+        if: env.generate_release_branch == 'true'
+        run: |
+          if [ -n "$(git ls-remote --heads origin release/v${{ env.next_version }})" ]; then
+            echo "Branch exists."
+            echo "branch_exists=true" >> $GITHUB_ENV
+          else
+            echo "Branch does not exist."
+            echo "branch_exists=false" >> $GITHUB_ENV
+          fi
+
+      - name: Delete Existing Release Branch
+        if: env.generate_release_branch == 'true' && env.branch_exists == 'true'
+        run: |
+          git push origin --delete release/v${{ env.next_version }}
+
+      - name: Create Release Branch
+        if: env.generate_release_branch == 'true'
+        run: |
+          git fetch --all
+          git checkout master
+          git pull origin master
+          git checkout -b release/v${{ env.next_version }}
+          git push origin release/v${{ env.next_version }}
+
+      - name: Close Previous PR if it Exists
+        if: env.generate_release_branch == 'false'
+        run: |
+          gh pr view ${{ github.ref_name }} > /dev/null 2>&1 && \
+            gh pr close ${{ github.ref_name }} --delete-branch || \
+            echo "No existing PR to close."
+
+      - name: Close Previous Release PR if it Exists
+        if: env.generate_release_branch == 'true'
+        run: |
+          pr_number=$(gh pr list --repo ${{ github.repository }} --base release/v${{ env.next_version }} --head develop --json number --jq '.[0].number')
+          echo "Pull request number: $pr_number"
+          
+          if [[ -n "$pr_number" ]]; then
+            echo "Pull request exists (#$pr_number). Closing it."
+            gh pr close "$pr_number" --repo ${{ github.repository }}
+          else
+            echo "No existing pull request to close."
+          fi
+
+      - name: Determine Branch From
+        run: |
+          if [[ "${{ inputs.env }}" == "dev" ]]; then
+            echo "source_branch=${{ github.ref_name }}" >> $GITHUB_ENV
+            echo "source_branch=${{ github.ref_name }}"
+          elif [[ "${{ inputs.env }}" == "hom" ]]; then
+            echo "source_branch=develop" >> $GITHUB_ENV
+            echo "source_branch=develop"
+          elif [[ "${{ inputs.env }}" == "prd" ]]; then
+            echo "source_branch=${{ github.ref_name }}" >> $GITHUB_ENV
+            echo "source_branch=${{ github.ref_name }}"
+          fi
+      
+      - name: Determine Target Branch
+        run: |
+          if [[ "${{ inputs.env }}" == "dev" ]]; then
+            echo "target_branch=develop" >> $GITHUB_ENV
+            echo "target_branch=develop"
+          elif [[ "${{ inputs.env }}" == "hom" ]]; then
+            echo "target_branch=release/v${{ env.next_version }}" >> $GITHUB_ENV
+            echo "target_branch=release/v${{ env.next_version }}"
+          elif [[ "${{ inputs.env }}" == "prd" ]]; then
+            echo "target_branch=master" >> $GITHUB_ENV
+            echo "target_branch=master"
+          fi
+
+      - name: Determine PR Title
+        run: |
+          title="Merge branch ${{ env.source_branch }} into ${{ env.target_branch }}"
+          echo "pr_title=$title" >> $GITHUB_ENV
+
+      - name: Create Pull Request with GitHub CLI
+        run: |
+          gh pr create \
+            --base ${{ env.target_branch }} \
+            --head ${{ env.source_branch }} \
+            --title "${{ env.pr_title }}" \
+            --body "This pull request was automatically created by a GitHub Action."
