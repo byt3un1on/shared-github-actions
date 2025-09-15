@@ -3,9 +3,6 @@ name: 4 - Tag & Release
 on:
   workflow_call:
 
-env:
-  GH_TOKEN: ${{ secrets.PATHSHARDS_GITHUB_PIPELINE_TOKEN }}
-
 jobs:
   tag_and_release:
     name: and Release
@@ -13,6 +10,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Generate GitHub Token
+      - name: Generate GitHub Token
+        id: app-token
+        uses: tibdex/github-app-token@v2
+        with:
+          app_id: ${{ secrets.APP_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+
       # Checkout the repository
       - name: Checkout repository
         uses: actions/checkout@v3
