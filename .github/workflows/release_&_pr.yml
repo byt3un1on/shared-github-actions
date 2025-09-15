@@ -7,14 +7,18 @@ on:
         required: true
         type: string
 
-env:
-  GH_TOKEN: ${{ secrets.PATHSHARDS_GITHUB_PIPELINE_TOKEN }}
-
 jobs:
   release_and_pr:
     name: to ${{ inputs.env }}
     runs-on: ubuntu-latest
     steps:
+      - name: Generate GitHub Token
+        id: app-token
+        uses: tibdex/github-app-token@v2
+        with:
+          app_id: ${{ secrets.APP_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Checkout repository
         uses: actions/checkout@v3
       
